@@ -1,11 +1,11 @@
-use std::{borrow::Cow, collections::VecDeque, error, fmt, sync::Mutex};
+use std::{borrow::Cow, collections::VecDeque, error, fmt, future::Future, pin::Pin, sync::Mutex};
 
 use log::{LevelFilter, Log, Metadata, Record};
 use once_cell::sync::{Lazy, OnceCell};
-use tokio::task::JoinHandle;
 
 static INNER_LOGGER: OnceCell<Box<dyn Log>> = OnceCell::new();
-static HANDLES: Lazy<Mutex<VecDeque<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
+static LOG_QUEUE: Lazy<Mutex<VecDeque<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>>> =
+    Lazy::new(|| Mutex::new(VecDeque::new()));
 
 struct ThreadedLogger {
     logger: &'static dyn Log,
@@ -41,7 +41,7 @@ impl Log for ThreadedLogger {
         let line = record.line();
 
         let logger_ = self.logger.clone();
-        let handle = tokio::spawn(async move {
+        let log_future = async move {
             let metadata = Metadata::builder().level(level).target(&target).build();
 
             logger_.log(
@@ -53,9 +53,9 @@ impl Log for ThreadedLogger {
                     .line(line)
                     .build(),
             );
-        });
+        };
 
-        HANDLES.lock().unwrap().push_back(handle);
+        LOG_QUEUE.lock().unwrap().push_back(Box::pin(log_future));
     }
 
     fn flush(&self) {
@@ -82,9 +82,9 @@ pub fn try_init(
     tokio::spawn(async move {
         loop {
             tokio::task::yield_now().await;
-            let handle = HANDLES.lock().unwrap().pop_front();
-            if let Some(handle) = handle {
-                handle.await.ok();
+            let log_future = LOG_QUEUE.lock().unwrap().pop_front();
+            if let Some(log_future) = log_future {
+                log_future.await;
             }
         }
     });
