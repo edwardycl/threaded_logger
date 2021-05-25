@@ -3,6 +3,9 @@ name = "threaded_logger"
 version = "0.1.0"
 authors = ["Youngchan Lee <youngchan1115@gmail.com>"]
 edition = "2018"
+license = "MIT"
+description = "An asynchronous logger wrapper"
+repository = "https://github.com/edwardycl/threaded_logger"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
