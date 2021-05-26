@@ -106,3 +106,23 @@ impl fmt::Display for ThreadedLoggerError {
 }
 
 impl error::Error for ThreadedLoggerError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn threaded_env_logger() {
+        let logger = env_logger::builder().build();
+        let filter = logger.filter();
+
+        init(logger, filter);
+
+        let now = std::time::Instant::now();
+        for i in 0..100000 {
+            log::info!("{}", i);
+        }
+        let t = now.elapsed().as_micros();
+        println!("time elapsed: {}µs", t);
+    }
+}
