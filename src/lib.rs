@@ -1,14 +1,14 @@
-use std::{borrow::Cow, collections::VecDeque, error, fmt, future::Future, pin::Pin, sync::Mutex};
+use std::{borrow::Cow, error, fmt};
 
+use crossbeam::channel::{unbounded, Sender};
 use log::{LevelFilter, Log, Metadata, Record};
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::OnceCell;
 
 static INNER_LOGGER: OnceCell<Box<dyn Log>> = OnceCell::new();
-static LOG_QUEUE: Lazy<Mutex<VecDeque<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>>> =
-    Lazy::new(|| Mutex::new(VecDeque::new()));
 
 struct ThreadedLogger {
     logger: &'static dyn Log,
+    sender: Sender<Box<dyn FnOnce() + Send>>,
 }
 
 impl Log for ThreadedLogger {
@@ -41,7 +41,7 @@ impl Log for ThreadedLogger {
         let line = record.line();
 
         let logger_ = self.logger.clone();
-        let log_future = async move {
+        let log = move || {
             let metadata = Metadata::builder().level(level).target(&target).build();
 
             logger_.log(
@@ -55,7 +55,7 @@ impl Log for ThreadedLogger {
             );
         };
 
-        LOG_QUEUE.lock().unwrap().push_back(Box::pin(log_future));
+        self.sender.send(Box::new(log)).ok();
     }
 
     fn flush(&self) {
@@ -67,11 +67,14 @@ pub fn try_init(
     logger: impl Log + 'static,
     max_level: LevelFilter,
 ) -> Result<(), ThreadedLoggerError> {
+    let (sender, receiver) = unbounded();
+
     INNER_LOGGER
         .set(Box::new(logger))
         .map_err(|_| ThreadedLoggerError(()))?;
     let threaded_logger = ThreadedLogger {
         logger: unsafe { INNER_LOGGER.get_unchecked() },
+        sender,
     };
 
     let r = log::set_boxed_logger(Box::new(threaded_logger)).map_err(|_| ThreadedLoggerError(()));
@@ -79,13 +82,9 @@ pub fn try_init(
         log::set_max_level(max_level);
     }
 
-    tokio::spawn(async move {
-        loop {
-            tokio::task::yield_now().await;
-            let log_future = LOG_QUEUE.lock().unwrap().pop_front();
-            if let Some(log_future) = log_future {
-                log_future.await;
-            }
+    tokio::task::spawn_blocking(move || loop {
+        if let Ok(log) = receiver.recv() {
+            log();
         }
     });
 
