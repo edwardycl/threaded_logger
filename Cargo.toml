@@ -1,6 +1,6 @@
 [package]
 name = "threaded_logger"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Youngchan Lee <youngchan1115@gmail.com>"]
 edition = "2018"
 license = "MIT"
